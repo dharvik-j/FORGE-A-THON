@@ -1,0 +1,38 @@
+{
+  "description": "FORGE editor-native coding agent: retrieves repository context, stages multi-file edits for per-hunk human review, and runs tests. Tools are served by the FORGE VS Code extension.",
+  "manifest": {
+    "model": {
+      "params": { "temperature": 0.2, "max_tokens": 8192, "parallel_tool_calls": false }
+    },
+    "mcp_servers": [
+      {
+        "name": "forge-workspace",
+        "enable_tools": ["@all"],
+        "require_approval_for_tools": ["submit_changes_for_review"],
+        "preload": false,
+        "preload_tools": [
+          "retrieve_context",
+          "search_workspace",
+          "read_file",
+          "find_symbol",
+          "propose_file_change",
+          "submit_changes_for_review",
+          "run_command"
+        ]
+      }
+    ],
+    "config": {
+      "sandbox": { "enabled": false },
+      "web_search": { "enabled": false },
+      "memory": { "enabled": false },
+      "generative_ui": { "enabled": false },
+      "ask_user_questions": { "enabled": false },
+      "dynamic_sub_agents": { "enabled": true },
+      "context_management": {
+        "compaction": { "enabled": true, "trigger": { "type": "input_tokens", "value": 40000 } },
+        "large_tool_response": { "enabled": false }
+      },
+      "iteration_limit": 60
+    }
+  }
+}

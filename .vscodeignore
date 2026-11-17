@@ -1,0 +1,7 @@
+**
+!dist/extension.js
+!trueforge/**
+!media/**
+!package.json
+!README.md
+!LICENSE
