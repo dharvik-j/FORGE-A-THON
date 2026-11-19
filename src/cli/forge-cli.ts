@@ -4,7 +4,10 @@
  *
  *   node dist/forge-cli.js setup --primary-model <provider/model> [--fallback-model <provider/model>]
  *   node dist/forge-cli.js serve --workspace <dir>
- *   node dist/forge-cli.js run   --workspace <dir> --task "<text>" [--approve all|none|first-hunk] [--cancel-after <sec>]
+ *   node dist/forge-cli.js run   --workspace <dir> --task "<text>" [--approve all|none|first-hunk] [--commands deny|allow] [--cancel-after <sec>]
+ *
+ * --commands defaults to deny: the agent's run_command calls are refused unless you pass --commands allow, which
+ * stands in for the editor's per-command approval dialog (commands still have to pass the FORGE command policy).
  */
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
@@ -52,7 +55,13 @@ async function main() {
   if (cmd === 'serve') return;
 
   const approve = arg('approve', 'all')!;
+  const commands = arg('commands', 'deny')!;
+  if (commands !== 'deny' && commands !== 'allow') throw new Error('--commands must be "deny" or "allow"');
   const host: ReviewHost = {
+    async confirmCommand({ command }) {
+      console.log(`\n[approval] run_command ${JSON.stringify(command)} -> ${commands === 'allow' ? 'allowed (--commands allow)' : 'denied (pass --commands allow to permit)'}`);
+      return commands === 'allow' ? 'once' : 'deny';
+    },
     async review({ proposals }) {
       try {
         const status = execFileSync('git', ['status', '--porcelain'], { cwd: ws.root, encoding: 'utf8' }).trim();

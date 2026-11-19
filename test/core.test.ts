@@ -8,8 +8,9 @@ import { Workspace, isSensitivePath } from '../src/core/workspace';
 import { SymbolIndex, extractSymbols, searchWorkspace } from '../src/core/search';
 import { retrieveContext, extractTerms } from '../src/core/context';
 import { ProposalStore, applySelectedHunks, computeHunks, applyEdits, removedLines } from '../src/core/proposals';
-import { parseCommandLine, validateCommand, CommandRunner } from '../src/core/commands';
-import { ForgeTools, startMcpHttpServer } from '../src/core/mcpServer';
+import * as http from 'node:http';
+import { parseCommandLine, validateCommand, validateShellArgs, CommandRunner } from '../src/core/commands';
+import { ForgeTools, startMcpHttpServer, rejectRequest } from '../src/core/mcpServer';
 import { normalizeToolCall, rateLimitDelayMs } from '../src/core/runController';
 import { isProviderFailure } from '../src/core/trueforge';
 
@@ -146,15 +147,67 @@ describe('command policy', () => {
     expect(() => validateCommand(['C:/evil/python.exe'])).toThrow();
     expect(() => validateCommand(['pytest', 'tests/test_cli.py', '-q'])).not.toThrow();
   });
+  it('refuses general-purpose code execution and secret reads (audit HIGH-1)', () => {
+    const reject = (line: string) => {
+      const { env, argv } = parseCommandLine(line);
+      return () => validateCommand(argv, env);
+    };
+    for (const bad of [
+      'python -c "print(1)"',
+      'py -3 -c "print(1)"',
+      'python script.py',
+      'python -m http.server',
+      'node -e "1"',
+      'npx cowsay hi',
+      'tox',
+      'git show HEAD:.env',
+      'git log --output=out.txt',
+      'git grep -O foo',
+      'git -c core.pager=x log',
+      'ruff check --fix .',
+      'ruff format .',
+      `flask --app "os:system('calc')" routes`,
+      `python -m flask --app "os:system('calc')" routes`,
+      `FLASK_APP="os:system('calc')" flask routes`,
+      'NODE_OPTIONS=--require=x pytest',
+      'PYTHONSTARTUP=x.py pytest',
+      'pytest --rootdir=. .env',
+    ]) {
+      expect(reject(bad), bad).toThrow();
+    }
+    for (const ok of [
+      'pytest tests/test_cli.py -q',
+      'pytest -k secrets -q',
+      'python -m pytest tests -q',
+      'py -3 -m pytest -q',
+      'python --version',
+      'flask --help',
+      'flask --app demo_app config',
+      'flask --app "app:create_app()" routes',
+      'FLASK_DEBUG=off pytest tests/test_helpers.py -q',
+      'git show HEAD:src/flask/cli.py',
+      'git diff --stat',
+      'ruff check src',
+      'npm test',
+    ]) {
+      expect(reject(ok), ok).not.toThrow();
+    }
+  });
+  it('refuses cmd.exe metacharacters for .cmd programs (audit HIGH-2)', () => {
+    for (const bad of ['&echo x', 'a b', '%USERNAME%', 'x^y', '(x)', 'a|b', 'x"y', 'a,b', 'a=b']) expect(() => validateShellArgs([bad]), bad).toThrow(/cmd\.exe/);
+    expect(() => validateShellArgs(['run', 'lint:ci', '--', '--watch'])).not.toThrow();
+  });
   it('enforces timeouts and cancellation', async () => {
-    const runner = new CommandRunner(tmp);
-    const t = await runner.run('node -e "setTimeout(()=>{}, 20000)"', { timeoutMs: 1000 });
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'forge-run-'));
+    fs.writeFileSync(path.join(dir, 'slow_test.py'), 'import time, unittest\n\n\nclass T(unittest.TestCase):\n    def test_slow(self):\n        time.sleep(20)\n');
+    const runner = new CommandRunner(dir);
+    const t = await runner.run('python -m unittest slow_test', { timeoutMs: 1500 });
     expect(t.timedOut).toBe(true);
     const ac = new AbortController();
-    setTimeout(() => ac.abort(), 300);
-    const c = await runner.run('node -e "setTimeout(()=>{}, 20000)"', { signal: ac.signal });
+    setTimeout(() => ac.abort(), 800);
+    const c = await runner.run('python -m unittest slow_test', { signal: ac.signal });
     expect(c.cancelled).toBe(true);
-  }, 20000);
+  }, 30000);
 });
 
 describe('event helpers', () => {
@@ -233,7 +286,40 @@ describe('MCP server over Streamable HTTP', () => {
     const unapproved = (await client.callTool({ name: 'submit_changes_for_review', arguments: { summary: 'x' } })) as { content: { text: string }[] };
     expect(unapproved.content[0]!.text).toMatch(/Not applied/);
     expect(fs.readFileSync(path.join(tmp, 'pkg/app.py'), 'utf8')).toContain('"""Load."""');
+    const notApproved = (await client.callTool({ name: 'run_command', arguments: { command: 'python --version' } })) as { content: { text: string }[]; isError?: boolean };
+    expect(notApproved.isError).toBe(true);
+    expect(notApproved.content[0]!.text).toMatch(/did not approve/);
+    tools.approveCommand('python --version');
+    const approved = (await client.callTool({ name: 'run_command', arguments: { command: 'python --version' } })) as { content: { text: string }[]; isError?: boolean };
+    expect(approved.content[0]!.text).toMatch(/exit code 0/);
+    const reused = (await client.callTool({ name: 'run_command', arguments: { command: 'python --version' } })) as { isError?: boolean };
+    expect(reused.isError).toBe(true); // approvals are one-shot
     await client.close();
+    server.close();
+  }, 20000);
+
+  it('refuses foreign Host headers and browser Origins (audit HIGH-3)', async () => {
+    expect(rejectRequest({ headers: { host: '127.0.0.1:3917' } }, 3917)).toBeUndefined();
+    expect(rejectRequest({ headers: { host: 'localhost:3917', 'sec-fetch-mode': 'cors' } }, 3917)).toBeUndefined();
+    expect(rejectRequest({ headers: { host: 'attacker.example:3917' } }, 3917)).toMatch(/Host/);
+    expect(rejectRequest({ headers: { host: '127.0.0.1:3917', origin: 'http://attacker.example' } }, 3917)).toMatch(/Origin/);
+    expect(rejectRequest({ headers: {} }, 3917)).toMatch(/Host/);
+
+    const tools = new ForgeTools(new Workspace(tmp));
+    const port = 39700 + Math.floor(Math.random() * 200);
+    const server = await startMcpHttpServer(tools, port);
+    const post = (headers: Record<string, string>) =>
+      new Promise<number>((resolve, reject) => {
+        const req = http.request({ host: '127.0.0.1', port, path: '/mcp', method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', ...headers } }, res => {
+          res.resume();
+          resolve(res.statusCode ?? 0);
+        });
+        req.on('error', reject);
+        req.end(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }));
+      });
+    expect(await post({ host: `attacker.example:${port}` })).toBe(403);
+    expect(await post({ host: `127.0.0.1:${port}`, origin: 'http://attacker.example' })).toBe(403);
+    expect(await post({ host: `127.0.0.1:${port}` })).toBe(200);
     server.close();
   });
 });

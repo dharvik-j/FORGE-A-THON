@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { Proposal, removedLines } from '../core/proposals';
 import { ReviewOutcome } from '../core/mcpServer';
-import { ReviewHost, ReviewRequest } from '../core/runController';
+import { CommandDecision, ReviewHost, ReviewRequest } from '../core/runController';
 import { Applier, StaleProposalError } from './applier';
 import { nonce, escapeHtml } from './html';
 
@@ -34,6 +34,24 @@ export class ReviewPanel implements ReviewHost {
     private applier: Applier,
     private docs: ProposalDocuments,
   ) {}
+
+  /** Modal confirmation before the agent runs a command. Closing the dialog, or cancelling the run, denies it. */
+  async confirmCommand(req: { command: string; signal: AbortSignal }): Promise<CommandDecision> {
+    const once = 'Run once';
+    const task = 'Allow this command for this task';
+    const cancelled = new Promise<undefined>(r => req.signal.addEventListener('abort', () => r(undefined), { once: true }));
+    this.onActivity?.(`Waiting for approval to run: ${req.command}`);
+    const pick = await Promise.race([
+      vscode.window.showWarningMessage(
+        'The FORGE agent wants to run a command in your workspace.',
+        { modal: true, detail: `${req.command}\n\nIt runs in the workspace root with your user permissions. Only allow commands you recognise (tests, flask --help, read-only git).` },
+        once,
+        task,
+      ),
+      cancelled,
+    ]);
+    return pick === once ? 'once' : pick === task ? 'task' : 'deny';
+  }
 
   review(req: ReviewRequest): Promise<ReviewOutcome & { dismissed?: boolean }> {
     return new Promise(async resolve => {

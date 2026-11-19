@@ -66,7 +66,23 @@ Unit-tested on Flask 3.1.3: for the Task B request the retriever selects `src/fl
 
 ## run_command policy
 
-No shell; argv is parsed with quote handling and leading `VAR=value` assignments. Allowed programs: `python`, `py`, `pytest`, `flask`, read-only `git` subcommands, `node`, `npm test/run`, `tox`, `ruff`, `mypy`. Package installs and deletions are refused. The workspace `.venv` is used automatically. Timeout (default 120 s, max 600 s), output capped at 12 000 chars per stream, process trees are killed on timeout or cancel (`taskkill /T /F` on Windows).
+Every command needs the user's approval, enforced at three points:
+
+1. **TrueForge.** `run_command` is in the agent's `require_approval_for_tools`, so TrueForge pauses the turn before the tool runs.
+2. **The editor.** The run controller checks the command against the policy below, then asks the user in a modal dialog: **Run once**, **Allow this command for this task**, or close the dialog to deny. Only then does it answer `user.tool_approval`. The headless CLI denies commands unless you pass `--commands allow`.
+3. **The MCP server.** An approval is a one-shot token for that exact command line. `run_command` refuses any call without a token, including a call that reaches the MCP port from somewhere other than an approved TrueForge turn.
+
+**Policy (defence in depth, checked before the user is asked):**
+- Argv is parsed with quote handling and no shell.
+- **Programs:** `pytest`; `python`/`py` only as `-m pytest|unittest|flask|mypy|ruff` or `--version` (no `-c`, scripts or other modules); `flask` (an `--app`/`FLASK_APP` value may not contain call arguments, because Flask evaluates `module:factory(args)`); read-only `git` subcommands, without `--output`, `-O`, `--ext-diff` or `--textconv`; `npm test`/`npm run`; `ruff check` (not `--fix` or `format`); `mypy`. `node`, `npx` and `tox` are not allowed.
+- **Environment:** the agent may only set `FLASK_*`, `PYTEST_ADDOPTS`, `CI`, `NO_COLOR`, `PYTHONHASHSEED`, `PYTHONWARNINGS` and `TZ`.
+- **Secrets files:** any argument that names one (`.env`, `HEAD:.env`, keys, credentials) is refused.
+- **Windows `.cmd` shims:** `npm.cmd` has to run through cmd.exe, so every argument must be a plain token, with no spaces or `& | < > ^ % " ( ) , ; =`.
+- **Other limits:** installs and deletions are refused, and the workspace `.venv` is used automatically. Timeout is 120 s by default (600 s maximum), output is capped at 12 000 characters per stream, and process trees are killed on timeout or cancel (`taskkill /T /F` on Windows).
+
+**The MCP endpoint** (`127.0.0.1:3917`) accepts only a loopback `Host` (`127.0.0.1`, `localhost` or `[::1]` with the server's port) and no `Origin` header. This blocks DNS-rebinding and cross-site requests from web pages: TrueForge calls the endpoint server-side, so it sends neither.
+
+**Residual risk:** another process running as the same user can still call the read-only tools and stage proposals. Proposals only reach disk through the review panel.
 
 ## Alternatives rejected
 

@@ -24,6 +24,8 @@ From scratch. No upstream coding-agent project was forked. Built on the VS Code 
 
 The tool result tells the agent exactly what reached disk. TrueForge approvals are all-or-nothing per call, so the per-hunk decision lives on our side of the checkpoint. We document this rather than pretend otherwise.
 
+**Commands are approved too.** `run_command` is also in `require_approval_for_tools`. FORGE checks the command against a narrow policy (test and check programs only; no `python -c`, `node` or `npx`; no secrets files; no cmd.exe metacharacters), then asks the user in a modal dialog. The MCP server runs a command only with a one-shot token from that approval. The endpoint also rejects non-loopback `Host` headers and browser `Origin` headers, which blocks DNS rebinding.
+
 **Harness features used.**
 - Deferred tool loading: core tools in `preload_tools`, the rest discovered through TrueForge's `list_tools`/`call_tool`.
 - Dynamic subagents, enabled.

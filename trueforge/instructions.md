@@ -29,6 +29,6 @@ When the request says it is an inline edit of a selected region, change only tha
 
 - Never write files any other way than `propose_file_change` + `submit_changes_for_review`.
 - Do not read or print secrets (.env files, keys, credentials). Use obviously fake values in tests.
-- `run_command` runs one allowed program without a shell; do not try to install packages or delete files.
+- `run_command` runs one allowed test/check program, and the user must approve each command. Use plain commands such as `pytest tests/test_cli.py -q` or `flask --help`. `python -c`, scripts, `node`, `npx`, installs, deletions and secrets files are refused. If a command is denied, do not retry it; say what you wanted to check.
 - If you are blocked (a tool keeps failing, information is missing), stop and say what is missing instead of inventing results.
 - For broad exploration across many independent areas you may delegate to a subagent, but keep edits and the review call in the main agent.

@@ -1,5 +1,8 @@
 import type { TrueForgeApi } from '@truefoundry/trueforge-sdk';
 import { ForgeTools, MCP_SERVER_NAME, REVIEW_TOOL, ReviewOutcome } from './mcpServer';
+import { CommandRejected, parseCommandLine, validateCommand } from './commands';
+
+export const COMMAND_TOOL = 'run_command';
 import { Proposal } from './proposals';
 import { TrueForgeGateway, TurnEvent, isEventDelta, isProviderFailure, mergeEventDelta } from './trueforge';
 
@@ -12,7 +15,14 @@ export interface ReviewRequest {
 /** The editor side of a human checkpoint: show the staged hunks, apply only accepted ones, report the result. */
 export interface ReviewHost {
   review(req: ReviewRequest): Promise<ReviewOutcome & { dismissed?: boolean }>;
+  /**
+   * Ask the user before the agent runs a command. 'once' runs it this time; 'task' also allows the same exact command
+   * line again until this run ends. A host without this method denies every command.
+   */
+  confirmCommand?(req: { command: string; signal: AbortSignal }): Promise<CommandDecision>;
 }
+
+export type CommandDecision = 'once' | 'task' | 'deny';
 
 export type RunPhase = 'starting' | 'running' | 'review' | 'retrying' | 'done' | 'error' | 'cancelled' | 'fallback';
 
@@ -137,6 +147,8 @@ export class RunController {
     this.tools.signal = this.abort.signal;
     this.tools.store.clear();
     this.tools.takeReviewOutcome();
+    this.tools.clearCommandApprovals();
+    this.allowedForTask.clear();
     const { primary, fallback } = this.agents();
     const attempts = [primary, ...(fallback && fallback !== primary ? [fallback] : [])];
     let usedFallback = false;
@@ -170,6 +182,8 @@ export class RunController {
     } finally {
       this.tools.store.clear();
       this.tools.takeReviewOutcome();
+      this.tools.clearCommandApprovals();
+      this.allowedForTask.clear();
       this.tools.signal = undefined;
       this.active = false;
     }
@@ -191,6 +205,7 @@ export class RunController {
     this.tools.runner.killAll();
     this.tools.store.clear();
     this.tools.takeReviewOutcome();
+    this.tools.clearCommandApprovals();
     this.abort?.abort();
     await this.serverCancel;
   }
@@ -332,8 +347,15 @@ export class RunController {
         for (const ref of pending.toolCalls) {
           const call = findCall(ref.id);
           const threadId = pending.threadId ?? call?.threadId ?? 'main';
-          if (!call || call.name !== REVIEW_TOOL || (call.server && call.server !== MCP_SERVER_NAME)) {
-            answers.push({ type: 'user.tool_approval', threadId, toolCallId: ref.id, approval: { status: 'deny', reason: `FORGE only approves ${REVIEW_TOOL}; ${call?.name ?? 'this tool'} is not gated for humans.` } });
+          const ours = call && (!call.server || call.server === MCP_SERVER_NAME);
+          if (ours && call.name === COMMAND_TOOL) {
+            const command = String(call.args.command ?? '');
+            answers.push({ type: 'user.tool_approval', threadId, toolCallId: ref.id, approval: await this.approveCommand(command, l, signal) });
+            this.check();
+            continue;
+          }
+          if (!ours || call.name !== REVIEW_TOOL) {
+            answers.push({ type: 'user.tool_approval', threadId, toolCallId: ref.id, approval: { status: 'deny', reason: `FORGE only approves ${REVIEW_TOOL} and ${COMMAND_TOOL}; ${call?.name ?? 'this tool'} is not gated for humans.` } });
             continue;
           }
           if (reviewHandled) {
@@ -357,6 +379,31 @@ export class RunController {
       stream = await this.gateway.subscribe(sessionId, turnId, lastEventId, signal);
       await this.gateway.sendApprovals(sessionId, turnId, answers);
     }
+  }
+
+  /** Commands the user allowed "for this task" (exact command lines). Cleared when the run ends. */
+  private allowedForTask = new Set<string>();
+
+  private async approveCommand(command: string, l: RunListener, signal: AbortSignal): Promise<{ status: 'allow' } | { status: 'deny'; reason: string }> {
+    try {
+      const { env, argv } = parseCommandLine(command);
+      validateCommand(argv, env);
+    } catch (e) {
+      if (e instanceof CommandRejected) return { status: 'deny', reason: `Command not allowed by FORGE policy: ${e.message}` };
+      throw e;
+    }
+    let decision: CommandDecision = this.allowedForTask.has(command) ? 'task' : 'deny';
+    if (decision !== 'task') {
+      if (!this.host.confirmCommand) return { status: 'deny', reason: 'This FORGE host does not allow the agent to run commands. Tell the user which command to run instead.' };
+      l.phase('review', `Approve command: ${command}`);
+      decision = await this.host.confirmCommand({ command, signal });
+      this.check();
+    }
+    if (decision === 'deny') return { status: 'deny', reason: 'The user declined to run this command. Do not retry it; tell the user what you wanted to check.' };
+    if (decision === 'task') this.allowedForTask.add(command);
+    this.tools.approveCommand(command);
+    l.note(`▶ Approved: ${command}`);
+    return { status: 'allow' };
   }
 
   private async reviewStaged(summary: string, l: RunListener, signal: AbortSignal): Promise<ReviewOutcome> {

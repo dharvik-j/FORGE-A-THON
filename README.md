@@ -76,6 +76,10 @@ node dist\forge-cli.js setup --primary-model "<provider>/<model>" --fallback-mod
 
 Model ids are listed by `curl http://localhost:8790/api/v1/models`.
 
+Re-run setup whenever `trueforge/forge-agent.json` or `trueforge/instructions.md` changes, so TrueForge has the current agent spec. Until you do, an old spec without the `run_command` gate makes every agent command fail with "not approved". That failure is safe: nothing runs.
+
+**Commands need your approval.** When the agent wants to run something (normally the tests), VS Code shows a modal dialog with the exact command line: **Run once**, **Allow this command for this task**, or close it to deny. Only test and check programs are allowed; see [docs/TECHNICAL_DECISIONS.md](docs/TECHNICAL_DECISIONS.md#run_command-policy). In the headless CLI, commands are denied unless you pass `--commands allow`.
+
 ## Using it
 
 | Action | How |

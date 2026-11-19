@@ -148,6 +148,50 @@ describe('RunController', () => {
     expect(log.some(l => l.startsWith('phase:retrying'))).toBe(true);
   }, 20000);
 
+  it('asks the user before run_command, remembers "for this task", and refuses policy violations unasked', async () => {
+    const asked: string[] = [];
+    const askingHost: ReviewHost = { ...host, confirmCommand: async ({ command }) => (asked.push(command), 'task') };
+    const cmdCall = (id: string, command: string): Ev[] => [
+      { type: 'model.message', id: `m${id}`, threadId: 'main', finishReason: 'tool_calls', toolCalls: [{ id, type: 'function', function: { name: 'run_command', arguments: JSON.stringify({ command }) }, toolInfo: { type: 'mcp', name: 'run_command', serverName: 'forge-workspace', serverId: 'x' } }] },
+      { type: 'tool.approval_required', id: `a${id}`, threadId: 'main', toolCalls: [{ id, sourceEventId: `m${id}` }] },
+      { type: 'turn.update', id: `u${id}`, threadId: null, state: { status: 'paused' } },
+    ];
+    let afterFirst = false;
+    gw.scripts.push(() => play({ type: 'turn.created', id: '1', turnId: 't1', threadId: null }, ...cmdCall('c1', 'pytest -q')));
+    gw.scripts.push(async function* () {
+      afterFirst = tools.consumeCommandApproval('pytest -q'); // what the MCP handler does when TrueForge runs the tool
+      for (const e of cmdCall('c2', 'pytest -q')) yield e;
+    });
+    gw.scripts.push(() => play(...cmdCall('c3', 'python -c "import os"')));
+    gw.scripts.push(() => play(done()));
+    const c = new RunController(gw as unknown as TrueForgeGateway, tools, askingHost, () => ({ primary: 'primary' }));
+    const r = await c.run({ message: 'go', title: 'go' }, listener([]));
+    expect(r.status).toBe('done');
+    expect(afterFirst).toBe(true);
+    expect(asked).toEqual(['pytest -q']); // second identical command reused the task approval; the -c one never reached the user
+    const statuses = gw.approvals.map(a => (a as { approval: { status: string; reason?: string } }[])[0]!.approval);
+    expect(statuses[0]!.status).toBe('allow');
+    expect(statuses[1]!.status).toBe('allow');
+    expect(statuses[2]!.status).toBe('deny');
+    expect(statuses[2]!.reason).toMatch(/policy/);
+    expect(tools.consumeCommandApproval('pytest -q')).toBe(false); // cleared when the run ended
+  });
+
+  it('denies run_command when the host cannot ask the user', async () => {
+    gw.scripts.push(() =>
+      play(
+        { type: 'turn.created', id: '1', turnId: 't1', threadId: null },
+        { type: 'model.message', id: 'm1', threadId: 'main', finishReason: 'tool_calls', toolCalls: [{ id: 'c1', type: 'function', function: { name: 'run_command', arguments: '{"command":"pytest -q"}' }, toolInfo: { type: 'mcp', name: 'run_command', serverName: 'forge-workspace', serverId: 'x' } }] },
+        { type: 'tool.approval_required', id: '2', threadId: 'main', toolCalls: [{ id: 'c1', sourceEventId: 'm1' }] },
+        { type: 'turn.update', id: '3', threadId: null, state: { status: 'paused' } },
+      ),
+    );
+    gw.scripts.push(() => play(done()));
+    await controller().run({ message: 'go', title: 'go' }, listener([]));
+    expect((gw.approvals[0] as { approval: { status: string } }[])[0]!.approval.status).toBe('deny');
+    expect(tools.consumeCommandApproval('pytest -q')).toBe(false);
+  });
+
   it('cancel stops the turn via TrueForge, drops staged edits, and never falls back', async () => {
     gw.scripts.push(signal =>
       (async function* () {

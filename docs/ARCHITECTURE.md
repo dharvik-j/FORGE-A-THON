@@ -33,7 +33,7 @@
 3. The agent stages edits with `propose_file_change` (in memory, diff returned to the agent) for every file it needs.
 4. It calls `submit_changes_for_review`, which is gated by `require_approval_for_tools`. TrueForge emits `tool.approval_required` and `turn.update{paused}`.
 5. FORGE opens the review: a side-by-side diff plus per-hunk Accept/Reject. On Apply, accepted hunks go through one `WorkspaceEdit` (stale files are refused). FORGE stores the outcome, subscribes after the last event id, and sends `user.tool_approval` allow, or deny with reasons if everything was rejected.
-6. TrueForge runs the tool. It returns the stored outcome (`APPLIED path: n/m hunks`, `REJECTED …`) so the agent knows the real state. The agent runs `pytest` via `run_command` and summarises.
+6. TrueForge runs the tool. It returns the stored outcome (`APPLIED path: n/m hunks`, `REJECTED …`) so the agent knows the real state. The agent runs `pytest` via `run_command`. That tool is also gated: TrueForge pauses, FORGE checks the command policy and asks the user in a modal dialog, and the MCP server runs only commands carrying a one-shot approval token. The agent then summarises.
 7. `turn.done{done}` ends the run. On `turn.done{error}` with a provider-shaped message and nothing applied, FORGE clears staged edits and repeats steps 1–6 on `forge-coder-fallback`.
 
 ## Cancel

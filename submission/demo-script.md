@@ -35,7 +35,7 @@ Rubric shown: A1 (diff in editor, per-hunk accept/reject), B2 (review before wri
 3. Let tool cards stream (search/read/propose). Model waiting may be sped up, not cut.
 4. **Show the TrueForge session**: click "Open TrueForge session" → browser shows turns, tool calls, the approval pause (and any subagent threads). ~10 s.
 5. Back in VS Code, the review lists ≥ 3 files (`src/flask/cli.py`, `tests/test_cli.py`, `docs/cli.rst`). Accept hunks file by file; to demonstrate per-hunk control, reject one cosmetic hunk if there is one. Apply.
-6. The agent runs the tests itself (`run_command`). Then in the terminal:
+6. The agent asks to run the tests: a modal dialog shows `pytest tests/test_cli.py -q`. Click **Allow this command for this task**. Then in the terminal:
    - `pytest tests/test_cli.py -q` → passes
    - `flask --help` → `config` listed
    - `flask --app <demo app> config` → masked JSON (`"SECRET_KEY": "***"` …) with ordinary values visible. Use a small demo app with dummy values, e.g. `tests/test_apps/…` or a one-file `demo_app.py` created before recording.

@@ -8,7 +8,7 @@
       {
         "name": "forge-workspace",
         "enable_tools": ["@all"],
-        "require_approval_for_tools": ["submit_changes_for_review"],
+        "require_approval_for_tools": ["submit_changes_for_review", "run_command"],
         "preload": false,
         "preload_tools": [
           "retrieve_context",

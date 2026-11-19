@@ -51,6 +51,26 @@ export class ForgeTools extends EventEmitter {
     return o;
   }
 
+  private approvedCommands = new Map<string, number>();
+
+  /** Called by the run controller after the user approved this exact command line in the editor. One call = one run. */
+  approveCommand(command: string): void {
+    this.approvedCommands.set(command, (this.approvedCommands.get(command) ?? 0) + 1);
+  }
+
+  /** run_command consumes an approval; a call that was not approved by the user (or arrives from elsewhere) is refused. */
+  consumeCommandApproval(command: string): boolean {
+    const n = this.approvedCommands.get(command) ?? 0;
+    if (n <= 0) return false;
+    if (n === 1) this.approvedCommands.delete(command);
+    else this.approvedCommands.set(command, n - 1);
+    return true;
+  }
+
+  clearCommandApprovals(): void {
+    this.approvedCommands.clear();
+  }
+
   emitTyped<K extends keyof ForgeToolEvents>(event: K, ...args: Parameters<ForgeToolEvents[K]>): void {
     this.emit(event, ...args);
   }
@@ -244,11 +264,14 @@ export function buildMcpServer(tools: ForgeTools): McpServer {
     {
       title: 'Run a command',
       description:
-        'Run one program in the workspace root without a shell (no pipes or redirects). Allowed: python, pytest, flask, git (read-only), node, npm test. A project virtualenv (.venv) is used automatically. Environment variables may be prefixed, e.g. "FLASK_DEBUG=off python -c \\"...\\"". Use it to run tests after your changes have been applied.',
+        'Run one test/check program in the workspace root. The user must approve every command in the editor, so run only what you need. Allowed: pytest, python -m pytest|unittest|flask|mypy|ruff, flask (e.g. "flask --help", "flask --app module config"), read-only git (status, diff, log, show, ls-files, grep, blame, rev-parse), npm test / npm run <script>, ruff check, mypy. Not allowed: python -c or scripts, node, npx, installs, deletes, pipes or redirects, secrets files. A project virtualenv (.venv) is used automatically. Allowed env prefixes: FLASK_*, PYTEST_ADDOPTS, CI, NO_COLOR, e.g. "FLASK_DEBUG=off pytest tests/test_helpers.py -q". Use it to run tests after your changes have been applied.',
       inputSchema: { command: z.string(), timeout_seconds: z.number().int().optional() },
-      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     },
     guard(async ({ command, timeout_seconds }) => {
+      if (!tools.consumeCommandApproval(command)) {
+        throw new Error('Not run: the user did not approve this command in FORGE. Every run_command call needs approval.');
+      }
       tools.emitTyped('command', { command, phase: 'start' });
       const r = await tools.runner.run(command, { timeoutMs: (timeout_seconds ?? 120) * 1000, signal: tools.signal });
       tools.emitTyped('command', { command, phase: 'end', exitCode: r.exitCode, durationMs: r.durationMs });
@@ -260,9 +283,26 @@ export function buildMcpServer(tools: ForgeTools): McpServer {
   return server;
 }
 
+/** Why a request to the local MCP endpoint is refused, or undefined if it may proceed. */
+export function rejectRequest(req: { headers: http.IncomingHttpHeaders }, port: number): string | undefined {
+  const host = String(req.headers.host ?? '').toLowerCase();
+  const allowed = [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`];
+  if (!allowed.includes(host)) return `Forbidden: Host "${host}" is not a loopback address for this server.`;
+  // Not Sec-Fetch-*: Node's fetch (undici, used by TrueForge) sends Sec-Fetch-Mode itself.
+  if (req.headers.origin !== undefined) return 'Forbidden: browser (Origin) requests are not accepted.';
+  return undefined;
+}
+
 /** Stateless Streamable HTTP MCP endpoint on 127.0.0.1. A fresh McpServer/transport pair serves each request. */
 export function startMcpHttpServer(tools: ForgeTools, port: number): Promise<http.Server> {
   const httpServer = http.createServer(async (req, res) => {
+    // DNS-rebinding / cross-site guard: TrueForge calls http://127.0.0.1:<port>/mcp server-side, so a legitimate request
+    // carries a loopback Host and no Origin. A browser page reaching this port always sends its own Host or an Origin.
+    const reason = rejectRequest(req, (httpServer.address() as { port?: number } | null)?.port ?? port);
+    if (reason) {
+      res.writeHead(403, { 'content-type': 'application/json' }).end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32000, message: reason }, id: null }));
+      return;
+    }
     if (!req.url?.startsWith('/mcp')) {
       res.writeHead(404).end();
       return;
