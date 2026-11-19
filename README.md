@@ -1,4 +1,4 @@
-# FORGE — Editor-Native Coding Agent on TrueForge
+# FORGE -  EditorNative Coding Agent on TrueForge
 
 FORGE is a VS Code extension whose agent loop runs on [TrueForge](https://github.com/truefoundry/trueforge) (TrueFoundry's open-source agent harness), built for the Techfest 2026-27 TrueFoundry Forge-a-thon, Round 1.
 
