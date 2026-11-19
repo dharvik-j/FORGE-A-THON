@@ -22,12 +22,29 @@ VS Code extension ──SDK (HTTP+SSE)──▶ TrueForge (local mode, agent loo
 
 The extension never calls a model provider. Models and keys are configured only in TrueForge. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/TECHNICAL_DECISIONS.md](docs/TECHNICAL_DECISIONS.md).
 
-## Setup from a clean clone (Windows PowerShell)
+## Quick start (Windows)
+
+Install first: [Node.js](https://nodejs.org) ≥ 22.14, [Git](https://git-scm.com), [Python 3](https://www.python.org) (with the `py` launcher), [VS Code](https://code.visualstudio.com) ≥ 1.95 (with "Add to PATH"). Then, in PowerShell:
+
+```powershell
+git clone https://github.com/dharvik-j/FORGE-A-THON.git forge
+cd forge
+powershell -ExecutionPolicy Bypass -File setup.ps1    # once: packages, build, Flask demo repos
+powershell -ExecutionPolicy Bypass -File start.ps1    # every time: TrueForge + VS Code with FORGE loaded
+```
+
+Then do the two steps no script can do for you, because they need your own API keys:
+1. In TrueForge (it opens at http://localhost:8790): **Settings → Models**, add two models (see [step 2](#2-configure-two-models-in-trueforge)).
+2. In the VS Code window that opened: `Ctrl+Shift+P` → **FORGE: Set up TrueForge**, pick the two models.
+
+Now try [the tasks](#fixed-competition-tasks). For Task C, open the clean checkout with `start.ps1 flask-taskc`. The sections below explain each step in detail.
+
+## Setup from a clean clone, step by step (Windows PowerShell)
 
 Prerequisites: Node.js ≥ 22.14, Git, Python 3 (`py` launcher), VS Code ≥ 1.95.
 
 ```powershell
-git clone <this repo> forge; cd forge
+git clone https://github.com/dharvik-j/FORGE-A-THON.git forge; cd forge
 npm install
 npm run build
 ```
