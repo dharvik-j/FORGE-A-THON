@@ -7,3 +7,4 @@ workspaces/
 .env
 .env.*
 !.env.example
+!release/*.vsix

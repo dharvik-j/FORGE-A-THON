@@ -39,6 +39,21 @@ Then do the two steps no script can do for you, because they need your own API k
 
 Now try [the tasks](#fixed-competition-tasks). For Task C, open the clean checkout with `start.ps1 flask-taskc`. The sections below explain each step in detail.
 
+## Just the extension: one file
+
+[`release/forge-agent-0.1.0.vsix`](release/forge-agent-0.1.0.vsix) is the whole extension, already built, in one file (~350 KB). No Node build is needed to use it.
+
+1. Install it: in VS Code, open Extensions → `⋯` menu → **Install from VSIX…** and pick the file. Or run `code --install-extension forge-agent-0.1.0.vsix`.
+2. Start TrueForge (Node.js needed) in PowerShell, and leave it running. The first line lets TrueForge reach FORGE on 127.0.0.1:
+   ```powershell
+   $env:OUTBOUND_URL_ALLOWED_HOSTS='["127.0.0.1","localhost"]'; $env:MODEL_HTTP_HEADERS_TIMEOUT_MS='120000'
+   npx -y @truefoundry/trueforge@0.185.1
+   ```
+3. Add two models in TrueForge, then run **FORGE: Set up TrueForge** in VS Code.
+4. Open any project folder. FORGE appears in the left bar.
+
+Use one VS Code window at a time: the first window running FORGE takes port 3917. To uninstall, use the Extensions view.
+
 ## Setup from a clean clone, step by step (Windows PowerShell)
 
 Prerequisites: Node.js ≥ 22.14, Git, Python 3 (`py` launcher), VS Code ≥ 1.95.
