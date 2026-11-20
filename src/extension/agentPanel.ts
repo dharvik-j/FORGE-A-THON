@@ -48,7 +48,7 @@ export class AgentPanel implements vscode.WebviewViewProvider {
 <div id="status" class="status"><span id="conn" class="dot"></span><span id="statusText">Connecting to TrueForge…</span></div>
 <div id="log" class="log"><div class="empty">Describe a change. FORGE finds the relevant files itself; use <code>@path/file.py</code> or <code>@symbol:name</code> to pin context.</div></div>
 <div id="run" class="run hidden"><span id="phase">Running</span><span id="meta"></span><button id="cancel" class="danger">Cancel</button></div>
-<form id="f" class="composer"><textarea id="t" rows="3" placeholder="Ask FORGE to change the code… (Ctrl+Enter to send)"></textarea>
+<form id="f" class="composer"><textarea id="t" rows="3" placeholder="Ask FORGE to change the code… (Enter to send, Shift+Enter for a new line)"></textarea>
 <div class="row"><button type="button" id="session" class="link">Open TrueForge session</button><button type="button" id="undo" class="link">Undo last apply</button><button type="submit" id="send" class="primary">Send</button></div></form>
 <script nonce="${n}">${PANEL_JS}</script></body></html>`;
   }
@@ -111,8 +111,9 @@ case 'context':{const c=el('div','card ctx open');const h=el('header');h.appendC
 case 'note':add(el('div','phase',m.text));break;
 case 'metrics':meta.textContent=(meta.textContent.split(' · tokens')[0])+(m.totalTokens?' · tokens '+m.totalTokens:'')+(m.costUsd!=null?' · $'+Number(m.costUsd).toFixed(4):'');break;
 }});
-document.getElementById('f').addEventListener('submit',e=>{e.preventDefault();const v=t.value.trim();if(!v||running)return;vs.postMessage({type:'send',text:v});t.value='';});
-t.addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();document.getElementById('f').requestSubmit();}});
+const form=document.getElementById('f');
+form.addEventListener('submit',e=>{e.preventDefault();const v=t.value.trim();if(!v||running)return;vs.postMessage({type:'send',text:v});t.value='';});
+t.addEventListener('keydown',e=>{if(e.key!=='Enter'||e.shiftKey||e.isComposing||e.keyCode===229)return;e.preventDefault();form.requestSubmit();});
 document.getElementById('cancel').onclick=()=>vs.postMessage({type:'cancel'});
 document.getElementById('session').onclick=()=>vs.postMessage({type:'cmd',cmd:'forge.openSession'});
 document.getElementById('undo').onclick=()=>vs.postMessage({type:'cmd',cmd:'forge.undoLastApply'});
